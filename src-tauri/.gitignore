@@ -1,0 +1,8 @@
+# Cargo build output and Tauri-generated schemas.
+# Both are reproducible and should not be committed.
+/target/
+/gen/
+
+# Local development files
+*.log
+.DS_Store

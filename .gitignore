@@ -1,0 +1,26 @@
+# JavaScript / Electron dependencies and build output
+node_modules/
+dist/
+out/
+
+# Local diagnostics and temporary files
+*.log
+*.tmp
+*.temp
+.DS_Store
+Thumbs.db
+
+# Local packaging and exploration artifacts
+scratch/
+/main.js
+/preload.js
+
+# Rust / Tauri generated output
+src-tauri/target/
+src-tauri/gen/
+
+# Editor settings
+.idea/
+.vscode/
+!.vscode/extensions.json
+!.vscode/settings.json

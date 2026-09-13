@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pigeon</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    html, body {
+      width: 100%;
+      height: 100%;
+      background-color: #000000;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      user-select: none;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+      transition: opacity 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    .splash-card {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+    }
+    /* Один спокойный вдох логотипа, без бесконечной пульсации. */
+    .logo-container {
+      position: relative;
+      width: 88px;
+      height: 88px;
+      margin-bottom: 24px;
+      animation: logo-breathe 1.45s cubic-bezier(0.16, 1, 0.3, 1) 1 both;
+    }
+    .logo-svg {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+    /* Ровный спокойный свет красного диода (без мерцания) */
+    .diode {
+      fill: #ef4444;
+      filter: drop-shadow(0 0 8px rgba(239, 68, 68, 0.8));
+    }
+    .brand-title {
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 7px;
+      color: #e2e8f0;
+      text-transform: uppercase;
+      margin-left: 7px;
+      margin-bottom: 22px;
+      text-shadow: 0 0 16px rgba(255, 255, 255, 0.15);
+    }
+    /* Одиночный проход линии загрузки. */
+    .track-wrapper {
+      position: relative;
+      width: 190px;
+      height: 2px;
+      background: rgba(255, 255, 255, 0.08);
+      border-radius: 9999px;
+      overflow: hidden;
+      margin-bottom: 18px;
+    }
+    .track-beam {
+      position: absolute;
+      top: 0;
+      left: -90px;
+      width: 90px;
+      height: 100%;
+      background: linear-gradient(90deg, transparent, #38bdf8, #818cf8, transparent);
+      border-radius: 9999px;
+      filter: drop-shadow(0 0 4px #38bdf8);
+      animation: laser-sweep 1.25s cubic-bezier(0.16, 1, 0.3, 1) 1 both;
+    }
+    @keyframes laser-sweep {
+      0% {
+        left: -90px;
+      }
+      100% {
+        left: 190px;
+      }
+    }
+    @keyframes logo-breathe {
+      0% { opacity: 0.72; transform: scale(0.97); }
+      55% { opacity: 1; transform: scale(1.015); }
+      100% { opacity: 1; transform: scale(1); }
+    }
+    html.reduced-motion .logo-container,
+    html.reduced-motion .track-beam {
+      animation-duration: 1ms;
+    }
+    /* CONNECTING TO [X] */
+    .connecting-row {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      font-family: 'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 2.5px;
+      color: #64748b;
+      text-transform: uppercase;
+    }
+    .x-logo {
+      width: 13px;
+      height: 13px;
+      fill: #f8fafc;
+      display: inline-block;
+      vertical-align: middle;
+      filter: drop-shadow(0 0 6px rgba(255, 255, 255, 0.35));
+      margin-left: 2px;
+    }
+  </style>
+</head>
+<body>
+  <div class="splash-card">
+    <div class="logo-container">
+      <svg class="logo-svg" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+        <g fill="#f8fafc">
+          <rect x="236" y="120" width="40" height="40" rx="8"/>
+          <rect x="180" y="180" width="40" height="40" rx="8"/>
+          <rect x="236" y="180" width="40" height="40" rx="8"/>
+          <rect x="292" y="180" width="40" height="40" rx="8"/>
+          <rect x="124" y="240" width="40" height="40" rx="8"/>
+          <rect x="236" y="240" width="40" height="40" rx="8"/>
+          <rect x="348" y="240" width="40" height="40" rx="8"/>
+          <rect x="236" y="300" width="40" height="40" rx="8"/>
+          <rect x="236" y="360" width="40" height="40" rx="8"/>
+        </g>
+        <circle cx="410" cy="102" r="28" class="diode"/>
+        <circle cx="410" cy="102" r="12" fill="#ffffff"/>
+      </svg>
+    </div>
+    <div class="brand-title">P I G E O N</div>
+    <div class="track-wrapper">
+      <div class="track-beam"></div>
+    </div>
+    <div class="connecting-row">
+      <span>CONNECTING TO</span>
+      <svg class="x-logo" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+        <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/>
+      </svg>
+    </div>
+  </div>
+</body>
+</html>

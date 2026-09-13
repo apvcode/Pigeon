@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- Base Nothing Terminal white glyph -->
+  <g fill="#ffffff">
+    <rect x="236" y="140" width="40" height="40" rx="8"/>
+    <rect x="180" y="200" width="40" height="40" rx="8"/>
+    <rect x="236" y="200" width="40" height="40" rx="8"/>
+    <rect x="292" y="200" width="40" height="40" rx="8"/>
+    <rect x="124" y="260" width="40" height="40" rx="8"/>
+    <rect x="236" y="260" width="40" height="40" rx="8"/>
+    <rect x="348" y="260" width="40" height="40" rx="8"/>
+    <rect x="236" y="320" width="40" height="40" rx="8"/>
+    <rect x="236" y="380" width="40" height="40" rx="8"/>
+  </g>
+  
+        <circle cx="390" cy="120" r="80" fill="#24A1DE"/>
+        <circle cx="390" cy="120" r="40" fill="#ffffff"/>
+        
+</svg>

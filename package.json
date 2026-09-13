@@ -1,0 +1,79 @@
+{
+  "name": "pigeon",
+  "version": "0.1.0",
+  "description": "Unofficial XChat Desktop Client",
+  "desktopName": "pigeon",
+  "main": "src/main.js",
+  "scripts": {
+    "postinstall": "node scripts/patch-builder.js",
+    "start": "electron .",
+    "build:win": "electron-builder --win nsis",
+    "build:installer": "electron-builder --win nsis",
+    "build:portable": "electron-builder --win portable",
+    "build:linux": "electron-builder --linux",
+    "dist": "electron-builder --win nsis"
+  },
+  "keywords": [
+    "xchat",
+    "desktop",
+    "electron"
+  ],
+  "author": "Ilya/Apvcode",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "41.10.7",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "com.pigeon.xchat",
+    "productName": "Pigeon",
+    "copyright": "Copyright © 2026 Ilya/Apvcode",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "src/**/*",
+      "assets/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "assets/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "packElevateHelper": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": "always",
+      "createStartMenuShortcut": true,
+      "shortcutName": "Pigeon",
+      "artifactName": "Pigeon-Setup.exe",
+      "uninstallDisplayName": "Pigeon",
+      "deleteAppDataOnUninstall": true,
+      "runAfterFinish": true,
+      "include": "build/installer.nsh"
+    },
+    "linux": {
+      "syncDesktopName": true,
+      "target": [
+        "AppImage"
+      ],
+      "icon": "assets/icon.png",
+      "category": "Network;Chat;InstantMessaging;"
+    }
+  }
+}
