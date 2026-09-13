@@ -12,10 +12,15 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.1.0-22D3EE?style=flat-square&labelColor=111827" alt="Version 0.1.0">
-  <img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux-38BDF8?style=flat-square&labelColor=111827" alt="Windows and Linux">
-  <img src="https://img.shields.io/badge/runtime-Electron%2041-818CF8?style=flat-square&labelColor=111827" alt="Electron 41">
-  <img src="https://img.shields.io/badge/license-MIT-34D399?style=flat-square&labelColor=111827" alt="MIT License">
+  <a href="https://github.com/apvcode/Pigeon/releases/latest">
+    <img src="https://img.shields.io/badge/Version-0.1.0-0ea5e9?style=for-the-badge&logo=github&logoColor=white" alt="Version 0.1.0">
+  </a>
+  <img src="https://img.shields.io/badge/Windows-0078D4?style=for-the-badge&logo=windows&logoColor=white" alt="Windows">
+  <img src="https://img.shields.io/badge/Linux-FCC624?style=for-the-badge&logo=linux&logoColor=black" alt="Linux">
+  <img src="https://img.shields.io/badge/Electron-41-47848F?style=for-the-badge&logo=electron&logoColor=white" alt="Electron 41">
+  <a href="LICENSE">
+    <img src="https://img.shields.io/badge/License-MIT-10b981?style=for-the-badge&logo=opensourceinitiative&logoColor=white" alt="MIT License">
+  </a>
 </p>
 
 <p align="center">
@@ -72,6 +77,10 @@ npm run build:win     # NSIS installer
 
 Pigeon uses the official X web experience inside Electron. **Sign out and clear cache** removes the X session, cookies, local storage, and cached media kept by Pigeon; manually saved Downloads are never touched.
 
+### License
+
+This project is licensed under the [MIT License](LICENSE) — Copyright © 2026 [Apvcode](https://github.com/apvcode).
+
 ---
 
 <a id="русский"></a>
@@ -121,5 +130,9 @@ npm run build:win     # установщик NSIS
 ```
 
 Кнопка **«Выйти и удалить кэш»** очищает сессию X, cookies, локальное хранилище сайта и кэшированные медиа Pigeon. Файлы, вручную сохранённые в системную папку «Загрузки», не удаляются.
+
+### Лицензия
+
+Проект распространяется под лицензией [MIT](LICENSE) — Авторское право © 2026 [Apvcode](https://github.com/apvcode).
 
 <p align="center"><sub>Made with care for quieter conversations.</sub></p>

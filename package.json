@@ -18,7 +18,7 @@
     "desktop",
     "electron"
   ],
-  "author": "Ilya/Apvcode",
+  "author": "Apvcode",
   "license": "MIT",
   "devDependencies": {
     "electron": "41.10.7",
@@ -27,7 +27,7 @@
   "build": {
     "appId": "com.pigeon.xchat",
     "productName": "Pigeon",
-    "copyright": "Copyright © 2026 Ilya/Apvcode",
+    "copyright": "Copyright © 2026 Apvcode",
     "directories": {
       "output": "dist"
     },
