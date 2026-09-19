@@ -1,6 +1,6 @@
 {
   "name": "pigeon",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Unofficial XChat Desktop Client",
   "desktopName": "pigeon",
   "main": "src/main.js",
@@ -21,7 +21,8 @@
   "author": "Apvcode",
   "license": "MIT",
   "devDependencies": {
-    "electron": "41.10.7",
+    "adm-zip": "0.6.1",
+    "electron": "44.4.3",
     "electron-builder": "^26.15.3"
   },
   "build": {

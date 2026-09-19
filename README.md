@@ -13,11 +13,11 @@
 
 <p align="center">
   <a href="https://github.com/apvcode/Pigeon/releases/latest">
-    <img src="https://img.shields.io/badge/Version-0.1.0-0ea5e9?style=for-the-badge&logo=github&logoColor=white" alt="Version 0.1.0">
+    <img src="https://img.shields.io/badge/Version-0.1.1-0ea5e9?style=for-the-badge&logo=github&logoColor=white" alt="Version 0.1.1">
   </a>
   <img src="https://img.shields.io/badge/Windows-0078D4?style=for-the-badge&logo=windows&logoColor=white" alt="Windows">
   <img src="https://img.shields.io/badge/Linux-FCC624?style=for-the-badge&logo=linux&logoColor=black" alt="Linux">
-  <img src="https://img.shields.io/badge/Electron-41-47848F?style=for-the-badge&logo=electron&logoColor=white" alt="Electron 41">
+  <img src="https://img.shields.io/badge/Electron-44-47848F?style=for-the-badge&logo=electron&logoColor=white" alt="Electron 44">
   <a href="LICENSE">
     <img src="https://img.shields.io/badge/License-MIT-10b981?style=for-the-badge&logo=opensourceinitiative&logoColor=white" alt="MIT License">
   </a>
