@@ -2574,7 +2574,7 @@ ipcRenderer.invoke('get-app-update-state')
       }
       .pigeon-chat-opening {
         animation: pigeonChatSurfaceIn 280ms var(--pigeon-motion-ease) both;
-        will-change: opacity, translate;
+        will-change: opacity;
       }
       .pigeon-chat-header-enter {
         animation: pigeonChatHeaderIn 280ms var(--pigeon-motion-ease) both;
@@ -2588,8 +2588,8 @@ ipcRenderer.invoke('get-app-update-state')
         animation: pigeonChatComposerIn 300ms var(--pigeon-motion-ease) 90ms both;
       }
       @keyframes pigeonChatSurfaceIn {
-        from { opacity: .82; translate: 5px 0; }
-        to { opacity: 1; translate: 0 0; }
+        from { opacity: .82; }
+        to { opacity: 1; }
       }
       @keyframes pigeonChatHeaderIn {
         from { opacity: 0; translate: 0 -7px; }
@@ -2600,9 +2600,10 @@ ipcRenderer.invoke('get-app-update-state')
         to { opacity: 1; translate: 0 0; scale: 1; }
       }
       @keyframes pigeonChatComposerIn {
-        from { opacity: 0; translate: 0 8px; }
-        to { opacity: 1; translate: 0 0; }
+        from { opacity: 0; }
+        to { opacity: 1; }
       }
+      [data-testid="dm-message-scroller"] { overflow-x: hidden !important; }
       .pigeon-message-arrive-incoming {
         animation: pigeonMessageIncoming 300ms cubic-bezier(.16, 1, .3, 1) both;
         transform-origin: left bottom;
@@ -2816,23 +2817,28 @@ ipcRenderer.invoke('get-app-update-state')
   let pendingChatOpenAnimation = null;
   let lastObservedConversationKey = '';
   let messageArrivalObserver = null;
+  let messageScrollerMountObserver = null;
   let observedMessageScroller = null;
   let observedMessageConversationKey = '';
   const observedMessageIds = new Set();
   const NATIVE_MESSAGE_SELECTOR = '[data-testid^="message-"]:not([data-testid^="message-text-"])';
   function findActiveChatSurface() {
     const candidates = Array.from(document.querySelectorAll(
-      '[data-testid="DmScroller"], [data-testid="dm-conversation"], [data-testid="message-list"], [role="main"]'
+      '[data-testid="dm-conversation-panel"], [data-testid="dm-conversation-content"], [data-testid="dm-message-list-container"], [data-testid="DmScroller"], [data-testid="dm-conversation"], [data-testid="message-list"], [role="main"]'
     ));
     return candidates.find(el => {
       if (!isVisibleElement(el) || isInsideConversationList(el)) return false;
-      return Boolean(el.querySelector('[data-testid="messageEntry"], [data-testid^="dm-message-"], [contenteditable="true"], textarea'));
+      return Boolean(el.querySelector(`${NATIVE_MESSAGE_SELECTOR}, [data-testid="messageEntry"], [contenteditable="true"], textarea`));
     }) || null;
   }
 
   function getActiveConversationKey() {
     const pathMatch = (window.location.pathname || '').match(/\/(?:i\/chat|messages)\/([^/?#]+)/);
     if (pathMatch) return `path:${pathMatch[1]}`;
+    const directChatPath = (window.location.pathname || '').split('/').filter(Boolean);
+    if (window.location.hostname === 'chat.x.com' && directChatPath.length === 1) {
+      return `path:${directChatPath[0]}`;
+    }
 
     const selected = document.querySelector(
       '[data-testid^="dm-conversation-item-"][aria-selected="true"], [data-testid="conversation"][aria-selected="true"]'
@@ -2889,6 +2895,9 @@ ipcRenderer.invoke('get-app-update-state')
   function collectAddedNativeMessages(records) {
     const messages = new Set();
     for (const record of records) {
+      if (record.type === 'attributes' && record.target?.matches?.(NATIVE_MESSAGE_SELECTOR)) {
+        messages.add(record.target);
+      }
       for (const node of record.addedNodes || []) {
         if (node.nodeType !== Node.ELEMENT_NODE) continue;
         if (node.matches?.(NATIVE_MESSAGE_SELECTOR)) messages.add(node);
@@ -2898,8 +2907,14 @@ ipcRenderer.invoke('get-app-update-state')
     return Array.from(messages);
   }
 
+  function findMessageScroller() {
+    return document.querySelector(
+      '[data-testid="dm-message-scroller"], [data-testid="dm-message-list"] [class*="overflow-y-auto"], [data-testid="dm-message-list-container"] [class*="overflow-y-auto"]'
+    );
+  }
+
   function attachMessageArrivalObserver() {
-    const scroller = document.querySelector('[data-testid="dm-message-scroller"]');
+    const scroller = findMessageScroller();
     if (!scroller || scroller === observedMessageScroller) return;
     if (messageArrivalObserver) messageArrivalObserver.disconnect();
 
@@ -2922,7 +2937,26 @@ ipcRenderer.invoke('get-app-update-state')
         if (shouldAnimate) requestAnimationFrame(() => animateArrivingMessage(message));
       }
     });
-    messageArrivalObserver.observe(scroller, { childList: true, subtree: true });
+    messageArrivalObserver.observe(scroller, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['data-testid']
+    });
+  }
+
+  function watchForMessageScroller() {
+    if (messageScrollerMountObserver || !document.body) return;
+    messageScrollerMountObserver = new MutationObserver(records => {
+      const scrollerWasAdded = records.some(record => Array.from(record.addedNodes || []).some(node =>
+        node.nodeType === Node.ELEMENT_NODE && (
+          node.matches?.('[data-testid="dm-message-scroller"], [data-testid="dm-message-list"], [data-testid="dm-message-list-container"]') ||
+          node.querySelector?.('[data-testid="dm-message-scroller"], [data-testid="dm-message-list"], [data-testid="dm-message-list-container"]')
+        )
+      ));
+      if (scrollerWasAdded) requestAnimationFrame(attachMessageArrivalObserver);
+    });
+    messageScrollerMountObserver.observe(document.body, { childList: true, subtree: true });
   }
 
   function runChatOpeningAnimation(surface) {
@@ -2984,15 +3018,46 @@ ipcRenderer.invoke('get-app-update-state')
   }, true);
 
   window.addEventListener('popstate', () => scheduleChatOpeningAnimation(lastObservedConversationKey));
-  setTimeout(attachMessageArrivalObserver, 1200);
+  setTimeout(() => {
+    attachMessageArrivalObserver();
+    watchForMessageScroller();
+  }, 1200);
 
   // Открывает штатное меню «…» XChat по правому клику на сообщении.
   // Никакие пункты меню не эмулируются: Reply/Forward/Delete остаются логикой XChat.
   function findMessageContextContainer(target) {
     if (!target || !target.closest) return null;
-    const message = target.closest('[data-testid="messageEntry"], [data-testid^="dm-message-"]');
-    if (message && !isInsideConversationList(message)) return message;
-    const cell = target.closest('[data-testid="cellInnerDiv"]');
+
+    const message = target.closest(
+      '[data-testid^="message-"]:not([data-testid^="message-text-"]):not([data-testid^="message-overflow-"]):not([data-testid^="message-reaction-"]), [data-testid="messageEntry"], [data-testid^="dm-message-"]'
+    );
+    if (message && !isInsideConversationList(message)) {
+      const testId = message.getAttribute('data-testid') || '';
+      const isMessageListStructure = /^dm-message-(?:list|scroller|container|spinner|composer)/.test(testId);
+      if (!isMessageListStructure) {
+        // Ограничиваем пустую область только у конкретного свёрнутого текста.
+        // Высота соседнего обычного сообщения может быть любой и не должна
+        // отключать привычные жесты по всей его строке.
+        const hasCollapsedText = Boolean(message.querySelector('[data-testid="message-text-show-more"]'));
+        if (!hasCollapsedText) return message;
+      }
+    }
+
+    const content = target.closest(
+      '[role="article"], [data-testid^="message-text-"], img, video, audio, a, button, [role="button"], [role="link"], svg[role="img"]'
+    );
+    if (!content || isInsideConversationList(content)) return null;
+
+    const contentMessage = content.closest(
+      '[data-testid^="message-"]:not([data-testid^="message-text-"]):not([data-testid^="message-overflow-"]):not([data-testid^="message-reaction-"]), [data-testid="messageEntry"], [data-testid^="dm-message-"]'
+    );
+    if (contentMessage && !isInsideConversationList(contentMessage)) {
+      const testId = contentMessage.getAttribute('data-testid') || '';
+      const isMessageListStructure = /^dm-message-(?:list|scroller|container|spinner|composer)/.test(testId);
+      if (!isMessageListStructure) return contentMessage;
+    }
+
+    const cell = content.closest('[data-testid="cellInnerDiv"]');
     return cell && !isInsideConversationList(cell) ? cell : null;
   }
 
@@ -3009,10 +3074,16 @@ ipcRenderer.invoke('get-app-update-state')
       const testId = (el.getAttribute('data-testid') || '').toLowerCase();
       const aria = (el.getAttribute('aria-label') || '').toLowerCase();
       const title = (el.getAttribute('title') || '').toLowerCase();
-      const label = `${testId} ${aria} ${title}`;
       const text = (el.textContent || '').trim();
-      const isMoreAction = /more|overflow|actions|options|menu|ещ[её]|дополн|действ/.test(label);
-      if (isMoreAction || text === '...' || text === '⋯') return el;
+
+      // Кнопка раскрытия длинного текста называется message-text-show-more.
+      // Она не является меню сообщения и не должна срабатывать от правого или
+      // двойного клика.
+      if (/message-text-show-more|show-more|showmore|expand/.test(testId)) continue;
+
+      const isOverflowButton = /message-overflow-button|overflow-button|actions-menu|message-options/.test(testId);
+      const isMoreLabel = /^(more|options|message actions|message options|ещ[её]|действия|параметры)$/.test((aria || title).trim());
+      if (isOverflowButton || isMoreLabel || text === '...' || text === '⋯') return el;
     }
     return null;
   }
@@ -3031,6 +3102,16 @@ ipcRenderer.invoke('get-app-update-state')
       if (!button) return;
       try { button.click(); } catch (e) {}
     }, appConfig.reducedMotion ? 1 : 35);
+  }
+
+  let lastMessageMenuContainer = null;
+  let lastMessageMenuGestureAt = 0;
+  function openMessageMenu(container) {
+    const now = Date.now();
+    if (container === lastMessageMenuContainer && now - lastMessageMenuGestureAt < 250) return;
+    lastMessageMenuContainer = container;
+    lastMessageMenuGestureAt = now;
+    pressMessageMoreButton(container);
   }
 
   function findPreviewImage(target) {
@@ -3067,7 +3148,23 @@ ipcRenderer.invoke('get-app-update-state')
     if (!container) return;
     event.preventDefault();
     event.stopPropagation();
-    pressMessageMoreButton(container);
+    openMessageMenu(container);
+  }, true);
+
+  // На некоторых сборках XChat штатное событие contextmenu гасится внутренним
+  // слоем длинного сообщения. Правая кнопка при этом всегда приходит как
+  // mousedown, поэтому открываем меню уже на этом событии. Последующий
+  // contextmenu подавляется защитой от двойного запуска выше.
+  window.addEventListener('mousedown', (event) => {
+    if (event.button !== 2) return;
+    const target = event.target;
+    if (!target || (target.closest && target.closest('input, textarea, [contenteditable="true"], [role="menu"]'))) return;
+    if (findPreviewImage(target)) return;
+    const container = findMessageContextContainer(target);
+    if (!container) return;
+    event.preventDefault();
+    event.stopPropagation();
+    openMessageMenu(container);
   }, true);
 
   function findReplyMenuItem() {
@@ -3081,7 +3178,7 @@ ipcRenderer.invoke('get-app-update-state')
   }
 
   function replyToMessage(container) {
-    pressMessageMoreButton(container);
+    openMessageMenu(container);
     setTimeout(() => {
       const replyItem = findReplyMenuItem();
       if (replyItem) {
@@ -3090,14 +3187,32 @@ ipcRenderer.invoke('get-app-update-state')
     }, appConfig.reducedMotion ? 80 : 150);
   }
 
-  window.addEventListener('dblclick', (event) => {
+  let lastReplyContainer = null;
+  let lastReplyGestureAt = 0;
+  function replyToMessageOnce(container) {
+    const now = Date.now();
+    if (container === lastReplyContainer && now - lastReplyGestureAt < 300) return;
+    lastReplyContainer = container;
+    lastReplyGestureAt = now;
+    replyToMessage(container);
+  }
+
+  function handleMessageDoubleClick(event) {
     const target = event.target;
     if (!target || (target.closest && target.closest('a, button, [role="button"], input, textarea, [contenteditable="true"], [role="menu"]'))) return;
     const container = findMessageContextContainer(target);
     if (!container) return;
     event.preventDefault();
     event.stopPropagation();
-    replyToMessage(container);
+    replyToMessageOnce(container);
+  }
+
+  window.addEventListener('click', (event) => {
+    if (event.button === 0 && event.detail === 2) handleMessageDoubleClick(event);
+  }, true);
+
+  window.addEventListener('dblclick', (event) => {
+    handleMessageDoubleClick(event);
   }, true);
 
   function filesFromTransfer(transfer) {

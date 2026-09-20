@@ -60,6 +60,9 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
       - name: Download packages
         uses: actions/download-artifact@v8
         with:
@@ -70,5 +73,5 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           name: Pigeon ${{ github.ref_name }}
-          generate_release_notes: true
+          body_path: .github/RELEASE_NOTES.md
           files: release-assets/*
