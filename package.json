@@ -1,6 +1,6 @@
 {
   "name": "pigeon",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Unofficial XChat Desktop Client",
   "desktopName": "pigeon",
   "main": "src/main.js",
@@ -10,7 +10,7 @@
     "build:win": "electron-builder --win nsis",
     "build:installer": "electron-builder --win nsis",
     "build:portable": "electron-builder --win portable",
-    "build:linux": "electron-builder --linux",
+    "build:linux": "node scripts/build-linux.cjs",
     "dist": "electron-builder --win nsis"
   },
   "keywords": [
@@ -36,6 +36,14 @@
       "src/**/*",
       "assets/**/*",
       "package.json"
+    ],
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "apvcode",
+        "repo": "Pigeon",
+        "releaseType": "release"
+      }
     ],
     "win": {
       "target": [
@@ -76,5 +84,8 @@
       "icon": "assets/icon.png",
       "category": "Network;Chat;InstantMessaging;"
     }
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.9"
   }
 }

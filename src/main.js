@@ -1,4 +1,5 @@
 const { app, BrowserWindow, BrowserView, shell, session, Tray, Menu, globalShortcut, ipcMain, nativeImage, Notification, nativeTheme, dialog } = require('electron');
+const { autoUpdater } = require('electron-updater');
 const path = require('path');
 const { execFile, spawn, execSync } = require('child_process');
 const fs = require('fs');
@@ -141,6 +142,21 @@ app.commandLine.appendSwitch('disable-renderer-backgrounding');
 const configPath = path.join(app.getPath('userData'), 'pigeon_config.json');
 const performanceLogPath = path.join(app.getPath('userData'), 'pigeon_renderer_performance.jsonl');
 const cpuProfilePath = path.join(app.getPath('userData'), 'pigeon_renderer_cpu_profile.json');
+const wallpaperDir = path.join(app.getPath('userData'), 'wallpapers');
+const bundledWallpapersDir = path.join(__dirname, '../assets/wallpapers');
+const BUNDLED_CHAT_WALLPAPERS = Object.freeze({
+  celestial: 'celestial-pattern.webp',
+  playful: 'playful-pattern.webp',
+  galaxy: 'galaxy.webp',
+  forest: 'forest.webp',
+  'neon-city': 'neon-city.webp',
+  'neon-blur': 'neon-blur.webp',
+  'purple-lake': 'purple-lake.webp',
+  coffee: 'coffee.webp'
+});
+const CHAT_WALLPAPER_IDS = new Set(['none', ...Object.keys(BUNDLED_CHAT_WALLPAPERS), 'custom']);
+const CHAT_WALLPAPER_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp']);
+const MAX_CHAT_WALLPAPER_BYTES = 12 * 1024 * 1024;
 // Профилирование включается только во время отдельной диагностики: DevTools
 // sampler не должен работать у пользователя во время обычной переписки.
 const ENABLE_RENDERER_PROFILING = false;
@@ -191,7 +207,15 @@ function loadConfig() {
           ghostMode: false,
           privacyBlur: data.privacyBlur === true,
           bossKeyEnabled: data.bossKeyEnabled !== false,
-          reducedMotion: data.reducedMotion === true
+          reducedMotion: data.reducedMotion === true,
+          chatWallpaper: CHAT_WALLPAPER_IDS.has(data.chatWallpaper) ? data.chatWallpaper : 'none',
+          chatWallpaperDim: Number.isFinite(Number(data.chatWallpaperDim))
+            ? Math.max(0, Math.min(Number(data.chatWallpaperDim), 75))
+            : 36,
+          chatWallpaperBlur: Number.isFinite(Number(data.chatWallpaperBlur))
+            ? Math.max(0, Math.min(Number(data.chatWallpaperBlur), 12))
+            : 0,
+          chatWallpaperCustomPath: typeof data.chatWallpaperCustomPath === 'string' ? data.chatWallpaperCustomPath : ''
         };
       }
     }
@@ -205,7 +229,11 @@ function loadConfig() {
     ghostMode: false,
     privacyBlur: false,
     bossKeyEnabled: true,
-    reducedMotion: false
+    reducedMotion: false,
+    chatWallpaper: 'none',
+    chatWallpaperDim: 36,
+    chatWallpaperBlur: 0,
+    chatWallpaperCustomPath: ''
   };
 }
 
@@ -216,6 +244,51 @@ function saveConfig(cfg) {
 }
 
 const appConfig = loadConfig();
+
+function getCustomWallpaperDataUrl() {
+  try {
+    if (!appConfig.chatWallpaperCustomPath) return '';
+    const resolvedPath = path.resolve(appConfig.chatWallpaperCustomPath);
+    const resolvedDir = path.resolve(wallpaperDir);
+    const extension = path.extname(resolvedPath).toLowerCase();
+    if (path.dirname(resolvedPath) !== resolvedDir || !CHAT_WALLPAPER_EXTENSIONS.has(extension)) return '';
+    const stat = fs.statSync(resolvedPath);
+    if (!stat.isFile() || stat.size > MAX_CHAT_WALLPAPER_BYTES) return '';
+    const mime = extension === '.png' ? 'image/png' : extension === '.webp' ? 'image/webp' : 'image/jpeg';
+    return `data:${mime};base64,${fs.readFileSync(resolvedPath).toString('base64')}`;
+  } catch (e) {
+    return '';
+  }
+}
+
+function getBundledWallpaperDataUrl(id) {
+  try {
+    const fileName = BUNDLED_CHAT_WALLPAPERS[id];
+    if (!fileName) return '';
+    const filePath = path.join(bundledWallpapersDir, fileName);
+    return `data:image/webp;base64,${fs.readFileSync(filePath).toString('base64')}`;
+  } catch (e) {
+    return '';
+  }
+}
+
+function getSelectedWallpaperDataUrl() {
+  return appConfig.chatWallpaper === 'custom'
+    ? getCustomWallpaperDataUrl()
+    : getBundledWallpaperDataUrl(appConfig.chatWallpaper);
+}
+
+function getRendererSettings(includeWallpaperData = false) {
+  const { chatWallpaperCustomPath, ...safeConfig } = appConfig;
+  const settings = {
+    ...safeConfig,
+    sounds: AVAILABLE_SOUNDS,
+    isWindows: process.platform === 'win32',
+    isLinux: process.platform === 'linux'
+  };
+  if (includeWallpaperData) settings.chatWallpaperDataUrl = getSelectedWallpaperDataUrl();
+  return settings;
+}
 
 const AVAILABLE_SOUNDS = [
   { id: 'come here.mp3', nameEn: 'Come Here (Default)', nameRu: 'Come Here (По умолчанию)' },
@@ -351,12 +424,7 @@ function playNotificationSound(soundFileName = null, force = false) {
 
 function broadcastSettings() {
   if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send('settings-sync', {
-      ...appConfig,
-      sounds: AVAILABLE_SOUNDS,
-      isWindows: process.platform === 'win32',
-      isLinux: process.platform === 'linux'
-    });
+    mainWindow.webContents.send('settings-sync', getRendererSettings());
   }
 }
 
@@ -489,6 +557,22 @@ function setReducedMotion(enabled) {
   broadcastSettings();
 }
 
+function setChatWallpaper(settings = {}) {
+  const requestedId = typeof settings.id === 'string' ? settings.id : appConfig.chatWallpaper;
+  const wallpaperId = CHAT_WALLPAPER_IDS.has(requestedId) ? requestedId : 'none';
+  appConfig.chatWallpaper = wallpaperId === 'custom' && !getCustomWallpaperDataUrl() ? 'none' : wallpaperId;
+
+  if (Number.isFinite(Number(settings.dim))) {
+    appConfig.chatWallpaperDim = Math.max(0, Math.min(Math.round(Number(settings.dim)), 75));
+  }
+  if (Number.isFinite(Number(settings.blur))) {
+    appConfig.chatWallpaperBlur = Math.max(0, Math.min(Math.round(Number(settings.blur)), 12));
+  }
+
+  saveConfig(appConfig);
+  broadcastSettings();
+}
+
 function triggerBossKey() {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   if (mainWindow.isVisible()) {
@@ -506,6 +590,81 @@ let mainWindow = null;
 let tray = null;
 let isQuitting = false;
 let currentUnread = 0;
+let updaterInitialized = false;
+let automaticUpdateCheckScheduled = false;
+let updateInstallRequested = false;
+let dismissedUpdateVersion = '';
+let appUpdateState = { status: 'idle', currentVersion: app.getVersion() };
+
+function sendAppUpdateState(nextState = appUpdateState) {
+  appUpdateState = { ...appUpdateState, ...nextState, currentVersion: app.getVersion(), language: appConfig.language };
+  if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
+    mainWindow.webContents.send('app-update-state', appUpdateState);
+  }
+}
+
+function getSafeUpdateError(error) {
+  const message = String(error?.message || error || 'Update failed');
+  return message.replace(/https?:\/\/\S+/g, '').replace(/\s+/g, ' ').trim().slice(0, 180);
+}
+
+function initializeAutoUpdater() {
+  if (updaterInitialized || !app.isPackaged || !['win32', 'linux'].includes(process.platform)) return;
+  updaterInitialized = true;
+  autoUpdater.autoDownload = false;
+  autoUpdater.autoInstallOnAppQuit = false;
+  autoUpdater.allowPrerelease = false;
+
+  autoUpdater.on('checking-for-update', () => {
+    appUpdateState = { status: 'checking', currentVersion: app.getVersion() };
+  });
+  autoUpdater.on('update-available', info => {
+    const version = String(info?.version || '');
+    if (version && version === dismissedUpdateVersion) return;
+    sendAppUpdateState({ status: 'available', version, percent: 0, error: '' });
+  });
+  autoUpdater.on('update-not-available', () => {
+    appUpdateState = { status: 'idle', currentVersion: app.getVersion() };
+  });
+  autoUpdater.on('download-progress', progress => {
+    sendAppUpdateState({
+      status: 'downloading',
+      version: appUpdateState.version || '',
+      percent: Math.max(0, Math.min(100, Number(progress?.percent) || 0)),
+      transferred: Math.max(0, Number(progress?.transferred) || 0),
+      total: Math.max(0, Number(progress?.total) || 0)
+    });
+  });
+  autoUpdater.on('update-downloaded', info => {
+    sendAppUpdateState({ status: 'downloaded', version: String(info?.version || appUpdateState.version || ''), percent: 100 });
+    if (updateInstallRequested) {
+      setTimeout(() => {
+        isQuitting = true;
+        autoUpdater.quitAndInstall(false, true);
+      }, 900);
+    }
+  });
+  autoUpdater.on('error', error => {
+    console.warn('[Pigeon Updater] Update error:', getSafeUpdateError(error));
+    if (updateInstallRequested) {
+      sendAppUpdateState({ status: 'error', error: getSafeUpdateError(error) });
+    } else {
+      appUpdateState = { status: 'idle', currentVersion: app.getVersion() };
+    }
+  });
+}
+
+function scheduleAutomaticUpdateCheck() {
+  if (automaticUpdateCheckScheduled) return;
+  automaticUpdateCheckScheduled = true;
+  setTimeout(() => {
+    initializeAutoUpdater();
+    if (!updaterInitialized) return;
+    autoUpdater.checkForUpdates().catch(error => {
+      console.warn('[Pigeon Updater] Background check failed:', getSafeUpdateError(error));
+    });
+  }, 3500);
+}
 
 function getTelegramTrayIcon(count) {
   if (count <= 0) {
@@ -1464,7 +1623,7 @@ function createWindow() {
     splashDismissed = true;
 
     try {
-      splashView.webContents.executeJavaScript("document.body.style.opacity = '0';").catch(() => {});
+      splashView.webContents.executeJavaScript("document.documentElement.classList.add('is-leaving')").catch(() => {});
     } catch (e) {}
 
     setTimeout(() => {
@@ -1482,13 +1641,14 @@ function createWindow() {
       } catch (e) {
         console.error('[Pigeon Main] Ошибка removeBrowserView:', e);
       }
-    }, 280);
+    }, 380);
   }
 
   mainWindow.webContents.once('did-finish-load', () => {
     const elapsed = Date.now() - splashStartTime;
     const remaining = Math.max(0, minSplashTime - elapsed);
     setTimeout(dismissSplash, remaining);
+    scheduleAutomaticUpdateCheck();
   });
 
   // Предохранитель: закрыть сплэш максимум через 4 секунды при медленном интернете
@@ -1798,20 +1958,102 @@ if (!gotTheLock) {
 
     // Обработка настроек (звуки, язык, приватность)
     ipcMain.handle('get-settings', () => {
-      return {
-        language: appConfig.language || 'en',
-        notificationsEnabled: appConfig.notificationsEnabled !== false,
-        soundEnabled: appConfig.soundEnabled !== false,
-        soundFile: appConfig.soundFile || 'come here.mp3',
-        sounds: AVAILABLE_SOUNDS,
-        autoStart: appConfig.autoStart !== false,
-        isWindows: process.platform === 'win32',
-        isLinux: process.platform === 'linux',
-        ghostMode: appConfig.ghostMode === true,
-        privacyBlur: appConfig.privacyBlur === true,
-        bossKeyEnabled: appConfig.bossKeyEnabled !== false,
-        reducedMotion: appConfig.reducedMotion === true
-      };
+      return getRendererSettings(true);
+    });
+
+    ipcMain.handle('get-app-update-state', () => ({ ...appUpdateState, language: appConfig.language }));
+
+    ipcMain.handle('start-app-update', async () => {
+      initializeAutoUpdater();
+      if (!updaterInitialized) return { ok: false, error: 'updates-unavailable' };
+      updateInstallRequested = true;
+      try {
+        sendAppUpdateState({ status: 'downloading', percent: 0, error: '' });
+        await autoUpdater.downloadUpdate();
+        return { ok: true };
+      } catch (error) {
+        const safeError = getSafeUpdateError(error);
+        sendAppUpdateState({ status: 'error', error: safeError });
+        return { ok: false, error: safeError };
+      }
+    });
+
+    ipcMain.on('dismiss-app-update', () => {
+      if (appUpdateState.status === 'available') {
+        dismissedUpdateVersion = String(appUpdateState.version || '');
+      }
+      appUpdateState = { status: 'idle', currentVersion: app.getVersion() };
+    });
+
+    ipcMain.handle('retry-app-update-check', async () => {
+      initializeAutoUpdater();
+      updateInstallRequested = false;
+      if (!updaterInitialized) return { ok: false, error: 'updates-unavailable' };
+      try {
+        await autoUpdater.checkForUpdates();
+        return { ok: true };
+      } catch (error) {
+        return { ok: false, error: getSafeUpdateError(error) };
+      }
+    });
+
+    ipcMain.handle('get-chat-wallpaper-assets', async () => {
+      const entries = await Promise.all(Object.entries(BUNDLED_CHAT_WALLPAPERS).map(async ([id, fileName]) => {
+        try {
+          const buffer = await fs.promises.readFile(path.join(bundledWallpapersDir, 'thumbs', fileName));
+          return [id, `data:image/webp;base64,${buffer.toString('base64')}`];
+        } catch (e) {
+          return [id, ''];
+        }
+      }));
+      return Object.fromEntries(entries);
+    });
+
+    ipcMain.handle('get-chat-wallpaper-asset', (_event, id) => {
+      return typeof id === 'string' && BUNDLED_CHAT_WALLPAPERS[id]
+        ? getBundledWallpaperDataUrl(id)
+        : '';
+    });
+
+    ipcMain.handle('choose-chat-wallpaper', async () => {
+      if (!mainWindow || mainWindow.isDestroyed()) return { ok: false, error: 'window-unavailable' };
+      const result = await dialog.showOpenDialog(mainWindow, {
+        title: appConfig.language === 'ru' ? 'Выберите обои для чата' : 'Choose a chat wallpaper',
+        properties: ['openFile'],
+        filters: [
+          { name: appConfig.language === 'ru' ? 'Изображения' : 'Images', extensions: ['jpg', 'jpeg', 'png', 'webp'] }
+        ]
+      });
+      if (result.canceled || !result.filePaths[0]) return { ok: false, cancelled: true };
+
+      try {
+        const sourcePath = path.resolve(result.filePaths[0]);
+        const extension = path.extname(sourcePath).toLowerCase();
+        const stat = await fs.promises.stat(sourcePath);
+        if (!CHAT_WALLPAPER_EXTENSIONS.has(extension)) return { ok: false, error: 'unsupported-format' };
+        if (!stat.isFile() || stat.size > MAX_CHAT_WALLPAPER_BYTES) return { ok: false, error: 'file-too-large' };
+
+        await fs.promises.mkdir(wallpaperDir, { recursive: true });
+        const destinationPath = path.join(wallpaperDir, `custom${extension}`);
+        if (sourcePath !== destinationPath) {
+          await fs.promises.copyFile(sourcePath, destinationPath);
+        }
+        for (const oldExtension of CHAT_WALLPAPER_EXTENSIONS) {
+          const oldPath = path.join(wallpaperDir, `custom${oldExtension}`);
+          if (oldPath !== destinationPath) await fs.promises.rm(oldPath, { force: true });
+        }
+        appConfig.chatWallpaperCustomPath = destinationPath;
+        appConfig.chatWallpaper = 'custom';
+        saveConfig(appConfig);
+        return {
+          ok: true,
+          chatWallpaper: 'custom',
+          chatWallpaperDataUrl: getCustomWallpaperDataUrl()
+        };
+      } catch (error) {
+        console.error('[Pigeon Wallpaper] Не удалось сохранить изображение:', error);
+        return { ok: false, error: 'copy-failed' };
+      }
     });
 
     // Полный выход из X в пределах профиля Pigeon. Очищаем только хранилища
@@ -1909,6 +2151,10 @@ if (!gotTheLock) {
 
     ipcMain.on('set-reduced-motion', (_event, enabled) => {
       setReducedMotion(enabled);
+    });
+
+    ipcMain.on('set-chat-wallpaper', (_event, settings) => {
+      setChatWallpaper(settings);
     });
 
     ipcMain.on('boss-key-trigger', () => {

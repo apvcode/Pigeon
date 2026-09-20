@@ -1938,6 +1938,221 @@ ipcRenderer.on('open-conversation', (_event, convId) => {
   openConversation(convId);
 });
 
+// Ненавязчивое обновление приложения поверх XChat. Проверка выполняется в
+// main process, а renderer получает только безопасное состояние и проценты.
+let currentAppUpdateState = { status: 'idle' };
+
+function ensureAppUpdateStyles() {
+  if (document.getElementById('pigeon-app-update-styles')) return;
+  const styles = document.createElement('style');
+  styles.id = 'pigeon-app-update-styles';
+  styles.textContent = `
+    #pigeon-app-update-banner {
+      position: fixed;
+      top: 14px;
+      left: 50%;
+      z-index: 2147483647;
+      display: grid;
+      grid-template-columns: 38px minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 12px;
+      width: min(500px, calc(100vw - 28px));
+      min-height: 72px;
+      padding: 12px 13px;
+      overflow: hidden;
+      color: #f5f5f5;
+      background: rgba(22, 23, 25, .96);
+      border: 1px solid rgba(255, 255, 255, .11);
+      border-radius: 14px;
+      box-shadow: 0 16px 46px rgba(0, 0, 0, .48);
+      backdrop-filter: blur(22px) saturate(120%);
+      -webkit-backdrop-filter: blur(22px) saturate(120%);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      animation: pigeonUpdateEnter 420ms cubic-bezier(.16, 1, .3, 1) both;
+      transition: opacity 220ms ease, translate 220ms cubic-bezier(.4, 0, 1, 1);
+    }
+    #pigeon-app-update-banner.closing { opacity: 0; translate: 0 -16px; }
+    .pigeon-update-icon {
+      display: grid;
+      place-items: center;
+      width: 38px;
+      height: 38px;
+      border-radius: 11px;
+      color: #f8f8f8;
+      background: rgba(255, 255, 255, .075);
+      border: 1px solid rgba(255, 255, 255, .07);
+    }
+    .pigeon-update-icon svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+    .pigeon-update-copy { min-width: 0; }
+    .pigeon-update-title { color: #f4f4f5; font-size: 14px; font-weight: 650; line-height: 1.25; }
+    .pigeon-update-description { margin-top: 3px; overflow: hidden; color: #96989d; font-size: 12px; line-height: 1.3; text-overflow: ellipsis; white-space: nowrap; }
+    .pigeon-update-actions { display: flex; align-items: center; gap: 6px; }
+    .pigeon-update-button {
+      appearance: none;
+      min-height: 32px;
+      padding: 0 11px;
+      border: 0;
+      border-radius: 9px;
+      color: #a8aaae;
+      background: transparent;
+      font: 600 12px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      cursor: pointer;
+      transition: background 150ms ease, color 150ms ease, scale 150ms ease;
+    }
+    .pigeon-update-button:hover { color: #f4f4f5; background: rgba(255, 255, 255, .075); }
+    .pigeon-update-button:active { scale: .96; }
+    .pigeon-update-button.primary { color: #151617; background: #f2f2f2; }
+    .pigeon-update-button.primary:hover { color: #090a0b; background: #fff; }
+    .pigeon-update-button:disabled { opacity: .48; cursor: default; scale: 1; }
+    .pigeon-update-progress {
+      position: absolute;
+      inset: auto 0 0;
+      height: 2px;
+      overflow: hidden;
+      background: rgba(255, 255, 255, .06);
+      opacity: 0;
+    }
+    .pigeon-update-progress.visible { opacity: 1; }
+    .pigeon-update-progress-bar {
+      width: 0;
+      height: 100%;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, .86);
+      transition: width 180ms ease;
+    }
+    @keyframes pigeonUpdateEnter {
+      from { opacity: 0; translate: 0 -22px; scale: .975; }
+      to { opacity: 1; translate: 0 0; scale: 1; }
+    }
+    html.pigeon-reduced-motion #pigeon-app-update-banner { animation: none; transition: none; }
+    @media (prefers-reduced-motion: reduce) {
+      #pigeon-app-update-banner { animation: none; transition: none; }
+    }
+    @media (max-width: 560px) {
+      #pigeon-app-update-banner { grid-template-columns: 36px minmax(0, 1fr); }
+      .pigeon-update-actions { grid-column: 1 / -1; justify-content: flex-end; }
+    }
+  `;
+  (document.head || document.documentElement).appendChild(styles);
+}
+
+function closeAppUpdateBanner() {
+  const banner = document.getElementById('pigeon-app-update-banner');
+  if (!banner) return;
+  banner.classList.add('closing');
+  setTimeout(() => banner.remove(), 230);
+}
+
+function getAppUpdateCopy(state) {
+  const isRu = state.language === 'ru';
+  const version = state.version ? ` ${state.version}` : '';
+  if (state.status === 'available') return {
+    title: isRu ? `Доступен Pigeon${version}` : `Pigeon${version} is available`,
+    description: isRu ? 'Обновление скачается в фоне, затем Pigeon перезапустится.' : 'The update will download in the background, then Pigeon will restart.',
+    primary: isRu ? 'Обновить' : 'Update',
+    secondary: isRu ? 'Позже' : 'Later'
+  };
+  if (state.status === 'downloading') {
+    const percent = Math.max(0, Math.min(100, Math.round(Number(state.percent) || 0)));
+    return {
+      title: isRu ? `Загружаем обновление · ${percent}%` : `Downloading update · ${percent}%`,
+      description: isRu ? 'Можно продолжать пользоваться мессенджером.' : 'You can keep using the messenger.',
+      percent
+    };
+  }
+  if (state.status === 'downloaded') return {
+    title: isRu ? 'Обновление готово' : 'Update is ready',
+    description: isRu ? 'Перезапускаем Pigeon…' : 'Restarting Pigeon…',
+    percent: 100
+  };
+  return {
+    title: isRu ? 'Не удалось обновить Pigeon' : 'Pigeon could not be updated',
+    description: isRu ? 'Проверьте интернет и попробуйте ещё раз.' : 'Check your connection and try again.',
+    primary: isRu ? 'Повторить' : 'Retry',
+    secondary: isRu ? 'Закрыть' : 'Close'
+  };
+}
+
+function renderAppUpdateBanner(state) {
+  currentAppUpdateState = { ...currentAppUpdateState, ...state };
+  if (!['available', 'downloading', 'downloaded', 'error'].includes(currentAppUpdateState.status)) {
+    closeAppUpdateBanner();
+    return;
+  }
+  ensureAppUpdateStyles();
+  let banner = document.getElementById('pigeon-app-update-banner');
+  if (!banner) {
+    banner = document.createElement('section');
+    banner.id = 'pigeon-app-update-banner';
+    banner.setAttribute('role', 'status');
+    banner.setAttribute('aria-live', 'polite');
+    banner.innerHTML = `
+      <div class="pigeon-update-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24"><path d="M12 3v12m0 0 4.5-4.5M12 15l-4.5-4.5M5 20h14"/></svg>
+      </div>
+      <div class="pigeon-update-copy">
+        <div class="pigeon-update-title"></div>
+        <div class="pigeon-update-description"></div>
+      </div>
+      <div class="pigeon-update-actions"></div>
+      <div class="pigeon-update-progress"><div class="pigeon-update-progress-bar"></div></div>
+    `;
+    (document.body || document.documentElement).appendChild(banner);
+  }
+
+  banner.classList.remove('closing');
+  const copy = getAppUpdateCopy(currentAppUpdateState);
+  banner.querySelector('.pigeon-update-title').textContent = copy.title;
+  banner.querySelector('.pigeon-update-description').textContent = copy.description;
+  const actions = banner.querySelector('.pigeon-update-actions');
+  const progress = banner.querySelector('.pigeon-update-progress');
+  const progressBar = banner.querySelector('.pigeon-update-progress-bar');
+  actions.replaceChildren();
+
+  if (Number.isFinite(copy.percent)) {
+    progress.classList.add('visible');
+    progressBar.style.width = `${copy.percent}%`;
+  } else {
+    progress.classList.remove('visible');
+    progressBar.style.width = '0%';
+  }
+
+  if (copy.secondary) {
+    const secondary = document.createElement('button');
+    secondary.type = 'button';
+    secondary.className = 'pigeon-update-button';
+    secondary.textContent = copy.secondary;
+    secondary.addEventListener('click', () => {
+      ipcRenderer.send('dismiss-app-update');
+      closeAppUpdateBanner();
+    });
+    actions.appendChild(secondary);
+  }
+  if (copy.primary) {
+    const primary = document.createElement('button');
+    primary.type = 'button';
+    primary.className = 'pigeon-update-button primary';
+    primary.textContent = copy.primary;
+    primary.addEventListener('click', async () => {
+      primary.disabled = true;
+      if (currentAppUpdateState.status === 'error') {
+        closeAppUpdateBanner();
+        const result = await ipcRenderer.invoke('retry-app-update-check');
+        if (!result?.ok) renderAppUpdateBanner({ ...currentAppUpdateState, status: 'error' });
+      } else {
+        renderAppUpdateBanner({ ...currentAppUpdateState, status: 'downloading', percent: 0 });
+        await ipcRenderer.invoke('start-app-update');
+      }
+    });
+    actions.appendChild(primary);
+  }
+}
+
+ipcRenderer.on('app-update-state', (_event, state) => renderAppUpdateBanner(state || { status: 'idle' }));
+ipcRenderer.invoke('get-app-update-state')
+  .then(state => renderAppUpdateBanner(state || { status: 'idle' }))
+  .catch(() => {});
+
 // 5. Раздел настроек Pigeon (Уведомления, звуки и выбор языка)
 (() => {
   let appConfig = {
@@ -1952,7 +2167,12 @@ ipcRenderer.on('open-conversation', (_event, convId) => {
     ghostMode: false,
     privacyBlur: false,
     bossKeyEnabled: true,
-    reducedMotion: false
+    reducedMotion: false,
+    chatWallpaper: 'none',
+    chatWallpaperDim: 36,
+    chatWallpaperBlur: 0,
+    chatWallpaperDataUrl: '',
+    chatWallpaperAssets: {}
   };
 
   const DEFAULT_SOUNDS = [
@@ -1967,6 +2187,80 @@ ipcRenderer.on('open-conversation', (_event, convId) => {
     { id: 'sly.mp3', nameEn: 'Sly', nameRu: 'Sly' },
     { id: 'soobschenie.mp3', nameEn: 'Soobschenie', nameRu: 'Сообщение' }
   ];
+
+  const CHAT_WALLPAPERS = [
+    { id: 'none', nameRu: 'Без обоев', nameEn: 'No wallpaper', image: 'linear-gradient(#000, #000)', size: 'cover' },
+    { id: 'celestial', nameRu: 'Созвездия', nameEn: 'Celestial' },
+    { id: 'playful', nameRu: 'Неоновые символы', nameEn: 'Neon doodles' },
+    { id: 'galaxy', nameRu: 'Галактика', nameEn: 'Galaxy' },
+    { id: 'forest', nameRu: 'Туманный лес', nameEn: 'Misty forest' },
+    { id: 'neon-city', nameRu: 'Ночной город', nameEn: 'Neon city' },
+    { id: 'neon-blur', nameRu: 'Городские огни', nameEn: 'City lights' },
+    { id: 'purple-lake', nameRu: 'Фиолетовое озеро', nameEn: 'Purple lake' },
+    { id: 'coffee', nameRu: 'Кофе', nameEn: 'Coffee' }
+  ];
+
+  function getWallpaperDefinition(id) {
+    return CHAT_WALLPAPERS.find(wallpaper => wallpaper.id === id) || CHAT_WALLPAPERS[0];
+  }
+
+  function applyWallpaperState() {
+    ensureGlobalPrivacyStyles();
+    const root = document.documentElement;
+    if (!root) return;
+
+    const wallpaperData = typeof appConfig.chatWallpaperDataUrl === 'string' && /^data:image\/(?:png|jpeg|webp);base64,/.test(appConfig.chatWallpaperDataUrl)
+      ? appConfig.chatWallpaperDataUrl
+      : '';
+    const isActive = appConfig.chatWallpaper !== 'none' && Boolean(wallpaperData);
+    const image = isActive ? `url("${wallpaperData}")` : 'linear-gradient(#000, #000)';
+    const dim = Math.max(0, Math.min(Number(appConfig.chatWallpaperDim) || 0, 75));
+    const blur = Math.max(0, Math.min(Number(appConfig.chatWallpaperBlur) || 0, 12));
+
+    root.classList.toggle('pigeon-wallpaper-active', Boolean(isActive));
+    root.style.setProperty('--pigeon-wallpaper-image', image);
+    root.style.setProperty('--pigeon-wallpaper-size', 'cover');
+    root.style.setProperty('--pigeon-wallpaper-dim', String(dim / 100));
+    root.style.setProperty('--pigeon-wallpaper-blur', `${blur}px`);
+    updateWallpaperControls();
+  }
+
+  function saveWallpaperSettings(id = appConfig.chatWallpaper) {
+    appConfig.chatWallpaper = id;
+    if (id === 'none') {
+      appConfig.chatWallpaperDataUrl = '';
+    }
+    applyWallpaperState();
+    ipcRenderer.send('set-chat-wallpaper', {
+      id: appConfig.chatWallpaper,
+      dim: appConfig.chatWallpaperDim,
+      blur: appConfig.chatWallpaperBlur
+    });
+  }
+
+  async function selectWallpaper(id) {
+    if (id === 'none' || id === 'custom') {
+      saveWallpaperSettings(id);
+      return;
+    }
+
+    const previousId = appConfig.chatWallpaper;
+    const previousDataUrl = appConfig.chatWallpaperDataUrl;
+    appConfig.chatWallpaper = id;
+    updateWallpaperControls();
+
+    try {
+      const dataUrl = await ipcRenderer.invoke('get-chat-wallpaper-asset', id);
+      if (!/^data:image\/webp;base64,/.test(dataUrl || '')) throw new Error('wallpaper-unavailable');
+      appConfig.chatWallpaperDataUrl = dataUrl;
+      saveWallpaperSettings(id);
+    } catch (e) {
+      appConfig.chatWallpaper = previousId;
+      appConfig.chatWallpaperDataUrl = previousDataUrl;
+      applyWallpaperState();
+      showHudToast(appConfig.language === 'ru' ? 'Не удалось открыть обои' : 'Could not open the wallpaper', '⚠');
+    }
+  }
 
   function getEyeIconSvg(isBlurred) {
     if (isBlurred) {
@@ -1994,6 +2288,43 @@ ipcRenderer.on('open-conversation', (_event, convId) => {
           --pigeon-motion-fast: 1ms;
           --pigeon-motion-standard: 1ms;
         }
+      }
+      html.pigeon-wallpaper-active [data-testid="dm-message-list-container"] {
+        position: relative !important;
+        isolation: isolate !important;
+        background-color: #071018 !important;
+        background-image: var(--pigeon-wallpaper-image) !important;
+        background-position: center !important;
+        background-repeat: repeat !important;
+        background-size: var(--pigeon-wallpaper-size) !important;
+      }
+      html.pigeon-wallpaper-active [data-testid="dm-message-list-container"]::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        z-index: 0;
+        pointer-events: none;
+        background: rgba(0, 0, 0, var(--pigeon-wallpaper-dim));
+        backdrop-filter: blur(var(--pigeon-wallpaper-blur));
+        -webkit-backdrop-filter: blur(var(--pigeon-wallpaper-blur));
+      }
+      html.pigeon-wallpaper-active [data-testid="dm-message-list"] {
+        position: relative !important;
+        z-index: 1 !important;
+      }
+      html.pigeon-wallpaper-active [data-testid="dm-conversation-header"] {
+        background: rgba(0, 0, 0, .76) !important;
+        backdrop-filter: blur(18px) saturate(125%);
+        -webkit-backdrop-filter: blur(18px) saturate(125%);
+        border-bottom: 1px solid rgba(255, 255, 255, .08);
+      }
+      html.pigeon-wallpaper-active [data-testid="dm-composer-container"]::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        z-index: -1;
+        pointer-events: none;
+        background: linear-gradient(180deg, transparent, rgba(0, 0, 0, .68) 42%, rgba(0, 0, 0, .84));
       }
       /* ========================================================= */
       /* Размытие сообщений, цитируемых ответов и медиа в чате     */
@@ -2242,12 +2573,71 @@ ipcRenderer.on('open-conversation', (_event, convId) => {
         50% { box-shadow: 0 10px 34px rgba(29, 155, 240, 0.28); }
       }
       .pigeon-chat-opening {
-        animation: pigeonChatOpening var(--pigeon-motion-standard) var(--pigeon-motion-ease) both;
-        will-change: opacity, transform;
+        animation: pigeonChatSurfaceIn 280ms var(--pigeon-motion-ease) both;
+        will-change: opacity, translate;
       }
-      @keyframes pigeonChatOpening {
-        from { opacity: 0.72; transform: translateX(10px) scale(0.998); }
-        to { opacity: 1; transform: translateX(0) scale(1); }
+      .pigeon-chat-header-enter {
+        animation: pigeonChatHeaderIn 280ms var(--pigeon-motion-ease) both;
+      }
+      .pigeon-chat-message-enter {
+        animation: pigeonChatMessageIn 320ms var(--pigeon-motion-ease) both;
+        animation-delay: calc(35ms + var(--pigeon-message-order, 0) * 18ms);
+        will-change: opacity, translate, scale;
+      }
+      .pigeon-chat-composer-enter {
+        animation: pigeonChatComposerIn 300ms var(--pigeon-motion-ease) 90ms both;
+      }
+      @keyframes pigeonChatSurfaceIn {
+        from { opacity: .82; translate: 5px 0; }
+        to { opacity: 1; translate: 0 0; }
+      }
+      @keyframes pigeonChatHeaderIn {
+        from { opacity: 0; translate: 0 -7px; }
+        to { opacity: 1; translate: 0 0; }
+      }
+      @keyframes pigeonChatMessageIn {
+        from { opacity: 0; translate: 0 12px; scale: .988; }
+        to { opacity: 1; translate: 0 0; scale: 1; }
+      }
+      @keyframes pigeonChatComposerIn {
+        from { opacity: 0; translate: 0 8px; }
+        to { opacity: 1; translate: 0 0; }
+      }
+      .pigeon-message-arrive-incoming {
+        animation: pigeonMessageIncoming 300ms cubic-bezier(.16, 1, .3, 1) both;
+        transform-origin: left bottom;
+        will-change: opacity, translate, scale;
+      }
+      .pigeon-message-arrive-outgoing {
+        animation: pigeonMessageOutgoing 280ms cubic-bezier(.16, 1, .3, 1) both;
+        transform-origin: right bottom;
+        will-change: opacity, translate, scale;
+      }
+      @keyframes pigeonMessageIncoming {
+        0% { opacity: 0; translate: -12px 8px; scale: .965; }
+        68% { opacity: 1; translate: 1px -1px; scale: 1.006; }
+        100% { opacity: 1; translate: 0 0; scale: 1; }
+      }
+      @keyframes pigeonMessageOutgoing {
+        0% { opacity: 0; translate: 12px 8px; scale: .965; }
+        68% { opacity: 1; translate: -1px -1px; scale: 1.006; }
+        100% { opacity: 1; translate: 0 0; scale: 1; }
+      }
+      html.pigeon-reduced-motion .pigeon-chat-opening,
+      html.pigeon-reduced-motion .pigeon-chat-header-enter,
+      html.pigeon-reduced-motion .pigeon-chat-message-enter,
+      html.pigeon-reduced-motion .pigeon-chat-composer-enter,
+      html.pigeon-reduced-motion .pigeon-message-arrive-incoming,
+      html.pigeon-reduced-motion .pigeon-message-arrive-outgoing {
+        animation: none !important;
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .pigeon-chat-opening,
+        .pigeon-chat-header-enter,
+        .pigeon-chat-message-enter,
+        .pigeon-chat-composer-enter,
+        .pigeon-message-arrive-incoming,
+        .pigeon-message-arrive-outgoing { animation: none !important; }
       }
       #pigeon-file-drop-overlay {
         position: fixed;
@@ -2423,6 +2813,13 @@ ipcRenderer.on('open-conversation', (_event, convId) => {
   }
 
   let lastChatOpenAnimation = 0;
+  let pendingChatOpenAnimation = null;
+  let lastObservedConversationKey = '';
+  let messageArrivalObserver = null;
+  let observedMessageScroller = null;
+  let observedMessageConversationKey = '';
+  const observedMessageIds = new Set();
+  const NATIVE_MESSAGE_SELECTOR = '[data-testid^="message-"]:not([data-testid^="message-text-"])';
   function findActiveChatSurface() {
     const candidates = Array.from(document.querySelectorAll(
       '[data-testid="DmScroller"], [data-testid="dm-conversation"], [data-testid="message-list"], [role="main"]'
@@ -2433,18 +2830,146 @@ ipcRenderer.on('open-conversation', (_event, convId) => {
     }) || null;
   }
 
-  function animateChatOpening() {
+  function getActiveConversationKey() {
+    const pathMatch = (window.location.pathname || '').match(/\/(?:i\/chat|messages)\/([^/?#]+)/);
+    if (pathMatch) return `path:${pathMatch[1]}`;
+
+    const selected = document.querySelector(
+      '[data-testid^="dm-conversation-item-"][aria-selected="true"], [data-testid="conversation"][aria-selected="true"]'
+    );
+    if (selected) {
+      const testId = selected.getAttribute('data-testid') || '';
+      const href = selected.getAttribute('href') || selected.querySelector('a[href]')?.getAttribute('href') || '';
+      return `selected:${testId}:${href}:${(selected.textContent || '').trim().slice(0, 80)}`;
+    }
+
+    const header = document.querySelector(
+      '[data-testid="dm-conversation-header"], [data-testid="conversation-header"], [data-testid="DmScroller-header"]'
+    );
+    return header ? `header:${(header.textContent || '').trim().slice(0, 120)}` : '';
+  }
+
+  function clearChatOpeningClasses(surface) {
+    if (!surface) return;
+    surface.classList.remove('pigeon-chat-opening');
+    document.querySelectorAll('.pigeon-chat-header-enter, .pigeon-chat-message-enter, .pigeon-chat-composer-enter').forEach(el => {
+      el.classList.remove('pigeon-chat-header-enter', 'pigeon-chat-message-enter', 'pigeon-chat-composer-enter');
+      el.style.removeProperty('--pigeon-message-order');
+    });
+  }
+
+  function prefersReducedMotion() {
+    return appConfig.reducedMotion || Boolean(window.matchMedia?.('(prefers-reduced-motion: reduce)').matches);
+  }
+
+  function seedObservedMessages(scroller, conversationKey) {
+    observedMessageConversationKey = conversationKey;
+    observedMessageIds.clear();
+    scroller.querySelectorAll(NATIVE_MESSAGE_SELECTOR).forEach(message => {
+      const id = message.getAttribute('data-testid');
+      if (id) observedMessageIds.add(id);
+    });
+  }
+
+  function isMessageScrollerNearBottom(scroller) {
+    return scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 220;
+  }
+
+  function animateArrivingMessage(message) {
+    if (!message?.isConnected || prefersReducedMotion()) return;
+    const animationClass = message.classList.contains('justify-end')
+      ? 'pigeon-message-arrive-outgoing'
+      : 'pigeon-message-arrive-incoming';
+    message.classList.remove('pigeon-message-arrive-incoming', 'pigeon-message-arrive-outgoing');
+    void message.offsetWidth;
+    message.classList.add(animationClass);
+    setTimeout(() => message.classList.remove(animationClass), 380);
+  }
+
+  function collectAddedNativeMessages(records) {
+    const messages = new Set();
+    for (const record of records) {
+      for (const node of record.addedNodes || []) {
+        if (node.nodeType !== Node.ELEMENT_NODE) continue;
+        if (node.matches?.(NATIVE_MESSAGE_SELECTOR)) messages.add(node);
+        node.querySelectorAll?.(NATIVE_MESSAGE_SELECTOR).forEach(message => messages.add(message));
+      }
+    }
+    return Array.from(messages);
+  }
+
+  function attachMessageArrivalObserver() {
+    const scroller = document.querySelector('[data-testid="dm-message-scroller"]');
+    if (!scroller || scroller === observedMessageScroller) return;
+    if (messageArrivalObserver) messageArrivalObserver.disconnect();
+
+    observedMessageScroller = scroller;
+    seedObservedMessages(scroller, getActiveConversationKey());
+    messageArrivalObserver = new MutationObserver(records => {
+      const conversationKey = getActiveConversationKey();
+      if (conversationKey !== observedMessageConversationKey) {
+        seedObservedMessages(scroller, conversationKey);
+        return;
+      }
+
+      const addedMessages = collectAddedNativeMessages(records);
+      if (addedMessages.length === 0) return;
+      const shouldAnimate = isMessageScrollerNearBottom(scroller) && addedMessages.length <= 3;
+      for (const message of addedMessages) {
+        const id = message.getAttribute('data-testid');
+        if (!id || observedMessageIds.has(id)) continue;
+        observedMessageIds.add(id);
+        if (shouldAnimate) requestAnimationFrame(() => animateArrivingMessage(message));
+      }
+    });
+    messageArrivalObserver.observe(scroller, { childList: true, subtree: true });
+  }
+
+  function runChatOpeningAnimation(surface) {
     const now = Date.now();
     if (now - lastChatOpenAnimation < 220) return;
     lastChatOpenAnimation = now;
-    setTimeout(() => {
+    attachMessageArrivalObserver();
+    if (prefersReducedMotion()) return;
+
+    clearChatOpeningClasses(surface);
+    const header = surface.querySelector('[data-testid="dm-conversation-header"], [data-testid="conversation-header"], [data-testid="DmScroller-header"]') ||
+      document.querySelector('[data-testid="dm-conversation-header"], [data-testid="conversation-header"], [data-testid="DmScroller-header"]');
+    const composer = surface.querySelector('[data-testid="dm-composer-container"], [data-testid="dmComposer"]') ||
+      document.querySelector('[data-testid="dm-composer-container"], [data-testid="dmComposer"]');
+    const messages = Array.from(surface.querySelectorAll(
+      `[data-testid="messageEntry"], ${NATIVE_MESSAGE_SELECTOR}`
+    )).slice(-8);
+
+    if (header) header.classList.add('pigeon-chat-header-enter');
+    if (composer) composer.classList.add('pigeon-chat-composer-enter');
+    messages.forEach((message, index) => {
+      message.classList.add('pigeon-chat-message-enter');
+      message.style.setProperty('--pigeon-message-order', String(index));
+    });
+
+    void surface.offsetWidth;
+    surface.classList.add('pigeon-chat-opening');
+    setTimeout(() => clearChatOpeningClasses(surface), 620);
+  }
+
+  function scheduleChatOpeningAnimation(previousKey = getActiveConversationKey()) {
+    if (pendingChatOpenAnimation) clearTimeout(pendingChatOpenAnimation);
+    let attempts = 0;
+    const waitForConversation = () => {
+      attempts += 1;
+      const nextKey = getActiveConversationKey();
       const surface = findActiveChatSurface();
-      if (!surface) return;
-      surface.classList.remove('pigeon-chat-opening');
-      void surface.offsetWidth;
-      surface.classList.add('pigeon-chat-opening');
-      setTimeout(() => surface.classList.remove('pigeon-chat-opening'), appConfig.reducedMotion ? 1 : 300);
-    }, appConfig.reducedMotion ? 1 : 70);
+      if (surface && nextKey && nextKey !== previousKey) {
+        pendingChatOpenAnimation = null;
+        lastObservedConversationKey = nextKey;
+        runChatOpeningAnimation(surface);
+        return;
+      }
+      if (attempts < 18) pendingChatOpenAnimation = setTimeout(waitForConversation, 45);
+      else pendingChatOpenAnimation = null;
+    };
+    pendingChatOpenAnimation = setTimeout(waitForConversation, 35);
   }
 
   window.addEventListener('click', (event) => {
@@ -2454,9 +2979,12 @@ ipcRenderer.on('open-conversation', (_event, convId) => {
       '[data-testid^="dm-conversation-item-"], [data-testid="conversation"], .chat-item, a[href*="/i/chat/"], a[href*="/messages/"]'
     );
     if (conversation && isInsideConversationList(conversation)) {
-      animateChatOpening();
+      scheduleChatOpeningAnimation(getActiveConversationKey());
     }
   }, true);
+
+  window.addEventListener('popstate', () => scheduleChatOpeningAnimation(lastObservedConversationKey));
+  setTimeout(attachMessageArrivalObserver, 1200);
 
   // Открывает штатное меню «…» XChat по правому клику на сообщении.
   // Никакие пункты меню не эмулируются: Reply/Forward/Delete остаются логикой XChat.
@@ -3011,6 +3539,7 @@ ipcRenderer.on('open-conversation', (_event, convId) => {
     if (bossToggle) bossToggle.checked = appConfig.bossKeyEnabled !== false;
     const motionToggle = document.getElementById('pigeon-reduced-motion-toggle');
     if (motionToggle) motionToggle.checked = appConfig.reducedMotion === true;
+    applyWallpaperState();
   }
 
   function mountPrivacyButton() {
@@ -3335,7 +3864,7 @@ ipcRenderer.on('open-conversation', (_event, convId) => {
   // Синхронизация настроек из главного процесса
   try {
     ipcRenderer.invoke('get-settings').then(cfg => {
-      console.log('[Pigeon Preload] get-settings resolved:', JSON.stringify(cfg));
+      console.log('[Pigeon Preload] get-settings resolved');
       if (cfg) {
         appConfig = { ...appConfig, ...cfg };
         applyPrivacyState();
@@ -3716,11 +4245,400 @@ ipcRenderer.on('open-conversation', (_event, convId) => {
         color: #ffffff;
         font-weight: 600;
       }
+      .pigeon-wallpaper-launch {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-shrink: 0;
+        border: 0;
+        background: transparent;
+        color: #e7e9ea;
+        cursor: pointer;
+        padding: 0;
+      }
+      .pigeon-wallpaper-mini-preview {
+        width: 58px;
+        height: 40px;
+        border-radius: 10px;
+        background-color: #0c1117;
+        background-position: center;
+        background-size: cover;
+        border: 1px solid rgba(255, 255, 255, .14);
+        box-shadow: 0 4px 14px rgba(0, 0, 0, .28);
+      }
+      .pigeon-wallpaper-launch-label {
+        color: #1d9bf0;
+        font: 600 14px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      #pigeon-wallpaper-modal {
+        position: fixed;
+        inset: 0;
+        z-index: 2147483646;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 18px;
+        background: rgba(0, 0, 0, .7);
+        backdrop-filter: blur(4px);
+        -webkit-backdrop-filter: blur(4px);
+        animation: pigeonWallpaperBackdrop var(--pigeon-motion-fast) ease both;
+      }
+      @keyframes pigeonWallpaperBackdrop { from { opacity: 0; } to { opacity: 1; } }
+      .pigeon-wallpaper-dialog {
+        width: min(470px, calc(100vw - 28px));
+        max-height: min(760px, calc(100vh - 32px));
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+        color: #e7e9ea;
+        background: #17212b;
+        border: 1px solid rgba(255, 255, 255, .08);
+        border-radius: 14px;
+        box-shadow: 0 24px 72px rgba(0, 0, 0, .7);
+        animation: pigeonWallpaperDialog var(--pigeon-motion-standard) var(--pigeon-motion-ease) both;
+      }
+      @keyframes pigeonWallpaperDialog { from { opacity: 0; transform: translateY(10px) scale(.975); } to { opacity: 1; transform: none; } }
+      .pigeon-wallpaper-dialog-header,
+      .pigeon-wallpaper-dialog-footer {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 14px 16px;
+        background: #17212b;
+      }
+      .pigeon-wallpaper-dialog-header { border-bottom: 1px solid rgba(255, 255, 255, .08); }
+      .pigeon-wallpaper-dialog-footer { border-top: 1px solid rgba(255, 255, 255, .08); }
+      .pigeon-wallpaper-dialog-title { font: 600 17px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .pigeon-wallpaper-dialog-close,
+      .pigeon-wallpaper-button {
+        appearance: none;
+        border: 0;
+        border-radius: 999px;
+        color: #e7e9ea;
+        background: transparent;
+        font: 600 14px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        cursor: pointer;
+        transition: transform var(--pigeon-motion-fast) var(--pigeon-motion-ease), background var(--pigeon-motion-fast) ease;
+      }
+      .pigeon-wallpaper-dialog-close { width: 32px; height: 32px; font-size: 21px; line-height: 1; color: #9fb0bf; }
+      .pigeon-wallpaper-button { padding: 7px 5px; color: #64b5ef; }
+      .pigeon-wallpaper-button:hover,
+      .pigeon-wallpaper-dialog-close:hover { background: rgba(255, 255, 255, .15); }
+      .pigeon-wallpaper-button:active,
+      .pigeon-wallpaper-dialog-close:active { transform: scale(.96); }
+      .pigeon-wallpaper-button.primary { color: #64b5ef; background: transparent; }
+      .pigeon-wallpaper-dialog-body {
+        overflow: auto;
+        padding: 10px 12px 12px;
+        scrollbar-width: thin;
+        scrollbar-color: #566a7b transparent;
+      }
+      .pigeon-wallpaper-chat-preview {
+        position: relative;
+        min-height: 148px;
+        margin-bottom: 10px;
+        overflow: hidden;
+        isolation: isolate;
+        border: 1px solid rgba(255, 255, 255, .08);
+        border-radius: 10px;
+        background: #090d12;
+        box-shadow: inset 0 1px rgba(255, 255, 255, .03);
+      }
+      .pigeon-wallpaper-chat-preview-bg,
+      .pigeon-wallpaper-chat-preview-shade {
+        position: absolute;
+        inset: -14px;
+        pointer-events: none;
+      }
+      .pigeon-wallpaper-chat-preview-bg {
+        z-index: -2;
+        background-color: #090d12;
+        background-position: center;
+        background-repeat: no-repeat;
+        background-size: cover;
+        will-change: filter;
+      }
+      .pigeon-wallpaper-chat-preview-shade {
+        z-index: -1;
+        background: #000;
+      }
+      .pigeon-wallpaper-chat-preview-messages {
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        gap: 10px;
+        min-height: 148px;
+        padding: 16px 18px;
+      }
+      .pigeon-wallpaper-chat-bubble {
+        width: fit-content;
+        max-width: 78%;
+        padding: 8px 10px 6px;
+        color: #f5f7f8;
+        border-radius: 13px 13px 13px 4px;
+        background: rgba(35, 48, 60, .96);
+        box-shadow: 0 1px 2px rgba(0, 0, 0, .32);
+        font: 400 13px/1.32 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      .pigeon-wallpaper-chat-bubble.outgoing {
+        align-self: flex-end;
+        border-radius: 13px 13px 4px 13px;
+        background: #2b5278;
+      }
+      .pigeon-wallpaper-chat-time {
+        margin-left: 8px;
+        color: rgba(232, 240, 245, .58);
+        font-size: 10px;
+        white-space: nowrap;
+      }
+      .pigeon-wallpaper-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 8px;
+      }
+      .pigeon-wallpaper-tile {
+        position: relative;
+        aspect-ratio: 3 / 4.25;
+        overflow: hidden;
+        border: 0;
+        border-radius: 8px;
+        background-color: #090d12;
+        background-position: center;
+        background-repeat: no-repeat;
+        background-size: cover;
+        cursor: pointer;
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .06);
+        transition: transform var(--pigeon-motion-fast) var(--pigeon-motion-ease), box-shadow var(--pigeon-motion-fast) ease;
+      }
+      .pigeon-wallpaper-tile:hover { transform: scale(1.015); }
+      .pigeon-wallpaper-tile.selected { box-shadow: inset 0 0 0 3px #3390ec, 0 0 0 1px #3390ec; }
+      .pigeon-wallpaper-tile[data-wallpaper-id="none"]::after {
+        content: "×";
+        position: absolute;
+        inset: 50% auto auto 50%;
+        transform: translate(-50%, -50%);
+        color: #536575;
+        font: 300 34px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      .pigeon-wallpaper-selected-mark {
+        position: absolute;
+        top: 7px;
+        right: 7px;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        width: 22px;
+        height: 22px;
+        border-radius: 50%;
+        color: white;
+        background: #3390ec;
+        box-shadow: 0 3px 12px rgba(0, 0, 0, .35);
+        font-weight: 800;
+      }
+      .pigeon-wallpaper-tile.selected .pigeon-wallpaper-selected-mark { display: flex; }
+      .pigeon-wallpaper-adjustments {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+        margin-top: 12px;
+        padding: 11px 12px;
+        border-radius: 9px;
+        background: #202b36;
+        border: 1px solid rgba(255, 255, 255, .05);
+      }
+      .pigeon-wallpaper-range-label { display: flex; justify-content: space-between; color: #aeb8c2; font: 600 13px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .pigeon-wallpaper-range input { width: 100%; margin: 10px 0 0; accent-color: #1d9bf0; }
+      @media (max-width: 430px) {
+        .pigeon-wallpaper-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .pigeon-wallpaper-adjustments { grid-template-columns: 1fr; }
+      }
     `;
     const parent = document.head || document.documentElement;
     if (parent) {
       parent.appendChild(styleEl);
     }
+  }
+
+  function getWallpaperPreviewStyle(id) {
+    if (id === 'none') return { image: 'linear-gradient(#080b0f, #080b0f)', size: 'cover' };
+    const dataUrl = id === 'custom'
+      ? appConfig.chatWallpaperDataUrl
+      : (appConfig.chatWallpaperAssets[id] || (id === appConfig.chatWallpaper ? appConfig.chatWallpaperDataUrl : ''));
+    return /^data:image\/(?:png|jpeg|webp);base64,/.test(dataUrl || '')
+      ? { image: `url("${dataUrl}")`, size: 'cover' }
+      : { image: 'linear-gradient(145deg, #101821, #202d39)', size: 'cover' };
+  }
+
+  function updateWallpaperControls() {
+    const currentId = appConfig.chatWallpaper || 'none';
+    const miniPreview = document.getElementById('pigeon-wallpaper-mini-preview');
+    const launchLabel = document.getElementById('pigeon-wallpaper-launch-label');
+    const preview = getWallpaperPreviewStyle(currentId);
+    if (miniPreview) {
+      miniPreview.style.backgroundImage = preview.image;
+      miniPreview.style.backgroundSize = preview.size;
+    }
+    if (launchLabel) {
+      const definition = currentId === 'custom' ? null : getWallpaperDefinition(currentId);
+      launchLabel.textContent = currentId === 'custom'
+        ? (appConfig.language === 'ru' ? 'Свои обои' : 'Custom wallpaper')
+        : (appConfig.language === 'ru' ? definition.nameRu : definition.nameEn);
+    }
+
+    document.querySelectorAll('.pigeon-wallpaper-tile').forEach(tile => {
+      tile.classList.toggle('selected', tile.getAttribute('data-wallpaper-id') === currentId);
+      tile.setAttribute('aria-pressed', tile.getAttribute('data-wallpaper-id') === currentId ? 'true' : 'false');
+    });
+    const dimInput = document.getElementById('pigeon-wallpaper-dim');
+    const blurInput = document.getElementById('pigeon-wallpaper-blur');
+    const dimValue = document.getElementById('pigeon-wallpaper-dim-value');
+    const blurValue = document.getElementById('pigeon-wallpaper-blur-value');
+    const chatPreviewBg = document.getElementById('pigeon-wallpaper-chat-preview-bg');
+    const chatPreviewShade = document.getElementById('pigeon-wallpaper-chat-preview-shade');
+    if (dimInput) dimInput.value = String(appConfig.chatWallpaperDim);
+    if (blurInput) blurInput.value = String(appConfig.chatWallpaperBlur);
+    if (dimValue) dimValue.textContent = `${appConfig.chatWallpaperDim}%`;
+    if (blurValue) blurValue.textContent = `${appConfig.chatWallpaperBlur}px`;
+    if (chatPreviewBg) {
+      chatPreviewBg.style.backgroundImage = preview.image;
+      chatPreviewBg.style.backgroundSize = preview.size;
+      chatPreviewBg.style.filter = `blur(${appConfig.chatWallpaperBlur}px)`;
+    }
+    if (chatPreviewShade) chatPreviewShade.style.opacity = String(appConfig.chatWallpaperDim / 100);
+  }
+
+  function closeWallpaperModal() {
+    const modal = document.getElementById('pigeon-wallpaper-modal');
+    if (modal) modal.remove();
+  }
+
+  async function openWallpaperModal() {
+    ensureStyles();
+    closeWallpaperModal();
+    const isRu = appConfig.language === 'ru';
+    if (Object.keys(appConfig.chatWallpaperAssets || {}).length === 0) {
+      try {
+        appConfig.chatWallpaperAssets = await ipcRenderer.invoke('get-chat-wallpaper-assets') || {};
+      } catch (e) {
+        showHudToast(isRu ? 'Не удалось загрузить галерею' : 'Could not load the gallery', '⚠');
+      }
+    }
+    const modal = document.createElement('div');
+    modal.id = 'pigeon-wallpaper-modal';
+    modal.setAttribute('role', 'dialog');
+    modal.setAttribute('aria-modal', 'true');
+    modal.setAttribute('aria-label', isRu ? 'Выбор обоев чата' : 'Choose chat wallpaper');
+    modal.innerHTML = `
+      <div class="pigeon-wallpaper-dialog">
+        <div class="pigeon-wallpaper-dialog-header">
+          <div>
+            <div class="pigeon-wallpaper-dialog-title">${isRu ? 'Обои для чата' : 'Chat wallpaper'}</div>
+            <div class="pigeon-row-desc">${isRu ? 'Выберите фон и настройте его под себя' : 'Choose a background and tune its appearance'}</div>
+          </div>
+          <button type="button" class="pigeon-wallpaper-dialog-close" data-wallpaper-close aria-label="${isRu ? 'Закрыть' : 'Close'}">×</button>
+        </div>
+        <div class="pigeon-wallpaper-dialog-body">
+          <div class="pigeon-wallpaper-chat-preview" aria-label="${isRu ? 'Предпросмотр чата' : 'Chat preview'}">
+            <div class="pigeon-wallpaper-chat-preview-bg" id="pigeon-wallpaper-chat-preview-bg"></div>
+            <div class="pigeon-wallpaper-chat-preview-shade" id="pigeon-wallpaper-chat-preview-shade"></div>
+            <div class="pigeon-wallpaper-chat-preview-messages">
+              <div class="pigeon-wallpaper-chat-bubble">${isRu ? 'Теперь чат выглядит намного уютнее' : 'The chat feels much more personal now'}<span class="pigeon-wallpaper-chat-time">12:34</span></div>
+              <div class="pigeon-wallpaper-chat-bubble outgoing">${isRu ? 'Да, то что нужно' : 'Yes, just what I wanted'}<span class="pigeon-wallpaper-chat-time">12:35 ✓✓</span></div>
+            </div>
+          </div>
+          <div class="pigeon-wallpaper-grid" id="pigeon-wallpaper-grid"></div>
+          <div class="pigeon-wallpaper-adjustments">
+            <label class="pigeon-wallpaper-range">
+              <span class="pigeon-wallpaper-range-label"><span>${isRu ? 'Затемнение' : 'Dim'}</span><span id="pigeon-wallpaper-dim-value"></span></span>
+              <input id="pigeon-wallpaper-dim" type="range" min="0" max="75" step="1">
+            </label>
+            <label class="pigeon-wallpaper-range">
+              <span class="pigeon-wallpaper-range-label"><span>${isRu ? 'Размытие' : 'Blur'}</span><span id="pigeon-wallpaper-blur-value"></span></span>
+              <input id="pigeon-wallpaper-blur" type="range" min="0" max="12" step="1">
+            </label>
+          </div>
+        </div>
+        <div class="pigeon-wallpaper-dialog-footer">
+          <button type="button" class="pigeon-wallpaper-button" id="pigeon-wallpaper-upload">${isRu ? 'Загрузить своё' : 'Upload your own'}</button>
+          <button type="button" class="pigeon-wallpaper-button primary" data-wallpaper-close>${isRu ? 'Закрыть' : 'Close'}</button>
+        </div>
+      </div>
+    `;
+
+    const grid = modal.querySelector('#pigeon-wallpaper-grid');
+    const availableWallpapers = [...CHAT_WALLPAPERS];
+    if (appConfig.chatWallpaper === 'custom' && /^data:image\/(?:png|jpeg|webp);base64,/.test(appConfig.chatWallpaperDataUrl || '')) {
+      availableWallpapers.push({ id: 'custom', nameRu: 'Свои обои', nameEn: 'Custom', ...getWallpaperPreviewStyle('custom') });
+    }
+    availableWallpapers.forEach(wallpaper => {
+      const tile = document.createElement('button');
+      tile.type = 'button';
+      tile.className = 'pigeon-wallpaper-tile';
+      tile.setAttribute('data-wallpaper-id', wallpaper.id);
+      tile.setAttribute('aria-label', isRu ? wallpaper.nameRu : wallpaper.nameEn);
+      const tilePreview = getWallpaperPreviewStyle(wallpaper.id);
+      tile.style.backgroundImage = tilePreview.image;
+      tile.style.backgroundSize = tilePreview.size;
+      tile.title = isRu ? wallpaper.nameRu : wallpaper.nameEn;
+      tile.innerHTML = '<span class="pigeon-wallpaper-selected-mark">✓</span>';
+      grid.appendChild(tile);
+    });
+
+    modal.addEventListener('click', event => {
+      if (event.target === modal || event.target.closest('[data-wallpaper-close]')) {
+        closeWallpaperModal();
+        return;
+      }
+      const tile = event.target.closest('.pigeon-wallpaper-tile');
+      if (tile) void selectWallpaper(tile.getAttribute('data-wallpaper-id'));
+    });
+    modal.addEventListener('keydown', event => {
+      if (event.key === 'Escape') closeWallpaperModal();
+    });
+
+    const handleRange = (input, key, valueEl, suffix) => {
+      input.addEventListener('input', () => {
+        appConfig[key] = Number(input.value);
+        valueEl.textContent = `${input.value}${suffix}`;
+        applyWallpaperState();
+      });
+      input.addEventListener('change', () => saveWallpaperSettings());
+    };
+    handleRange(modal.querySelector('#pigeon-wallpaper-dim'), 'chatWallpaperDim', modal.querySelector('#pigeon-wallpaper-dim-value'), '%');
+    handleRange(modal.querySelector('#pigeon-wallpaper-blur'), 'chatWallpaperBlur', modal.querySelector('#pigeon-wallpaper-blur-value'), 'px');
+
+    modal.querySelector('#pigeon-wallpaper-upload').addEventListener('click', async event => {
+      const button = event.currentTarget;
+      button.disabled = true;
+      button.textContent = isRu ? 'Открываем…' : 'Opening…';
+      try {
+        const result = await ipcRenderer.invoke('choose-chat-wallpaper');
+        if (result && result.ok) {
+          appConfig.chatWallpaper = 'custom';
+          appConfig.chatWallpaperDataUrl = result.chatWallpaperDataUrl || '';
+          applyWallpaperState();
+          closeWallpaperModal();
+          openWallpaperModal();
+        } else if (result && !result.cancelled) {
+          const message = result.error === 'file-too-large'
+            ? (isRu ? 'Файл больше 12 МБ' : 'The file is larger than 12 MB')
+            : (isRu ? 'Не удалось загрузить изображение' : 'Could not load the image');
+          showHudToast(message, '⚠');
+        }
+      } catch (e) {
+        showHudToast(isRu ? 'Не удалось загрузить изображение' : 'Could not load the image', '⚠');
+      } finally {
+        if (button.isConnected) {
+          button.disabled = false;
+          button.textContent = isRu ? 'Загрузить своё' : 'Upload your own';
+        }
+      }
+    });
+
+    document.body.appendChild(modal);
+    updateWallpaperControls();
+    modal.querySelector('.pigeon-wallpaper-dialog-close')?.focus();
   }
 
   function flashSettingFeedback(input) {
@@ -3926,6 +4844,16 @@ ipcRenderer.on('open-conversation', (_event, convId) => {
       }
     });
 
+    const appearanceTitle = card.querySelector('#pigeon-appearance-title');
+    const appearanceDesc = card.querySelector('#pigeon-appearance-desc');
+    const wallpaperTitle = card.querySelector('#pigeon-wallpaper-title');
+    const wallpaperDesc = card.querySelector('#pigeon-wallpaper-desc');
+    if (appearanceTitle) appearanceTitle.textContent = isRu ? 'Оформление' : 'Appearance';
+    if (appearanceDesc) appearanceDesc.textContent = isRu ? 'Персональный фон для истории сообщений.' : 'A personal background for your message history.';
+    if (wallpaperTitle) wallpaperTitle.textContent = isRu ? 'Обои для чата' : 'Chat wallpaper';
+    if (wallpaperDesc) wallpaperDesc.textContent = isRu ? 'Готовые темы, своя картинка, затемнение и размытие' : 'Presets, custom image, dimming, and blur';
+    updateWallpaperControls();
+
     // Секция приватности (Privacy & Stealth)
     const sPrivTitle = card.querySelector('#pigeon-s-privacy-title');
     const sPrivDesc = card.querySelector('#pigeon-s-privacy-desc');
@@ -4078,6 +5006,23 @@ ipcRenderer.on('open-conversation', (_event, convId) => {
             </div>
           </div>
 
+          <!-- Секция: Оформление -->
+          <div class="pigeon-settings-section" id="pigeon-appearance-section">
+            <div class="pigeon-section-title" id="pigeon-appearance-title">${isRu ? 'Оформление' : 'Appearance'}</div>
+            <div class="pigeon-section-desc" id="pigeon-appearance-desc">${isRu ? 'Персональный фон для истории сообщений.' : 'A personal background for your message history.'}</div>
+
+            <div class="pigeon-native-row">
+              <div class="pigeon-row-left">
+                <div class="pigeon-row-title" id="pigeon-wallpaper-title">${isRu ? 'Обои для чата' : 'Chat wallpaper'}</div>
+                <div class="pigeon-row-desc" id="pigeon-wallpaper-desc">${isRu ? 'Готовые темы, своя картинка, затемнение и размытие' : 'Presets, custom image, dimming, and blur'}</div>
+              </div>
+              <button type="button" class="pigeon-wallpaper-launch" id="pigeon-wallpaper-launch">
+                <span class="pigeon-wallpaper-mini-preview" id="pigeon-wallpaper-mini-preview"></span>
+                <span class="pigeon-wallpaper-launch-label" id="pigeon-wallpaper-launch-label">${isRu ? 'Выбрать' : 'Choose'}</span>
+              </button>
+            </div>
+          </div>
+
           <!-- Секция: Приватность -->
           <div class="pigeon-settings-section" id="pigeon-privacy-section">
             <div class="pigeon-section-title" id="pigeon-s-privacy-title">${isRu ? 'Приватность' : 'Privacy & Stealth'}</div>
@@ -4198,6 +5143,12 @@ ipcRenderer.on('open-conversation', (_event, convId) => {
         });
 
         card.addEventListener('click', (e) => {
+          const wallpaperLaunch = e.target.closest('#pigeon-wallpaper-launch');
+          if (wallpaperLaunch) {
+            openWallpaperModal();
+            return;
+          }
+
           const clearSessionBtn = e.target.closest('#pigeon-clear-session-btn');
           if (clearSessionBtn) {
             if (clearSessionBtn.disabled) return;
@@ -4239,6 +5190,7 @@ ipcRenderer.on('open-conversation', (_event, convId) => {
         });
 
         target.row.after(card);
+        updateWallpaperControls();
       } else {
         if (target.row.nextElementSibling !== card) {
           target.row.after(card);

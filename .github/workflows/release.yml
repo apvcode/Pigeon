@@ -18,11 +18,16 @@ jobs:
           - platform: Linux
             os: ubuntu-latest
             command: npm run build:linux -- --publish never
-            artifact: dist/*.AppImage
+            artifact: |
+              dist/*.AppImage
+              dist/latest-linux.yml
           - platform: Windows
             os: windows-latest
             command: npm run build:win -- --publish never
-            artifact: dist/Pigeon-Setup.exe
+            artifact: |
+              dist/Pigeon-Setup.exe
+              dist/Pigeon-Setup.exe.blockmap
+              dist/latest.yml
 
     runs-on: ${{ matrix.os }}
 

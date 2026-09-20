@@ -13,7 +13,7 @@
 
 <p align="center">
   <a href="https://github.com/apvcode/Pigeon/releases/latest">
-    <img src="https://img.shields.io/badge/Version-0.1.1-0ea5e9?style=for-the-badge&logo=github&logoColor=white" alt="Version 0.1.1">
+    <img src="https://img.shields.io/badge/Version-0.2.0-0ea5e9?style=for-the-badge&logo=github&logoColor=white" alt="Version 0.2.0">
   </a>
   <img src="https://img.shields.io/badge/Windows-0078D4?style=for-the-badge&logo=windows&logoColor=white" alt="Windows">
   <img src="https://img.shields.io/badge/Linux-FCC624?style=for-the-badge&logo=linux&logoColor=black" alt="Linux">
@@ -46,6 +46,8 @@ Pigeon brings the official XChat web experience into a quieter desktop space. It
 | **Boss Key** | Instantly hide Pigeon to the tray with `Ctrl` + `Alt` + `H`. |
 | **Message shortcuts** | Right-click a message for its action menu; double-click to reply. |
 | **File-friendly chat** | Drag files into a conversation and paste text or images reliably. |
+| **Chat wallpapers** | Choose a polished preset or your own image, with adjustable dimming and blur. |
+| **Seamless updates** | Checks GitHub quietly, downloads with visible progress, then restarts into the new version. |
 | **Calm by default** | Soft feedback, optional reduced motion, no flashy or intrusive animations. |
 | **Private reset** | Sign out and clear X cookies, local storage, and cached media from Settings. |
 
@@ -56,7 +58,7 @@ Pigeon brings the official XChat web experience into a quieter desktop space. It
     <td width="50%" valign="top">
       <h4>Windows</h4>
       Download <code>Pigeon-Setup.exe</code> from the latest release and run it.<br><br>
-      To update, run the newer installer over the existing installation. <strong>Do not uninstall first</strong> — your Pigeon settings and data stay in place.
+      Future updates are offered inside Pigeon and install after confirmation. Your settings and session stay in place.
     </td>
     <td width="50%" valign="top">
       <h4>Linux</h4>
@@ -100,6 +102,8 @@ Pigeon переносит официальный веб-интерфейс XChat
 | **Boss Key** | Мгновенно прячет Pigeon в трей по `Ctrl` + `Alt` + `H`. |
 | **Быстрые действия** | Правый клик открывает меню сообщения, двойной клик отвечает на него. |
 | **Удобная работа с файлами** | Перетаскивание файлов в чат и надёжная вставка текста или изображений. |
+| **Обои для чата** | Готовые темы или своя картинка с настройкой затемнения и размытия. |
+| **Автообновление** | Тихо проверяет GitHub, показывает прогресс загрузки и перезапускается уже в новой версии. |
 | **Спокойный интерфейс** | Мягкая обратная связь, настройка «Уменьшить анимации», никаких навязчивых эффектов. |
 | **Очистка сессии** | Выход из X с удалением cookies, локальных данных и кэшированных медиа в настройках. |
 
@@ -110,7 +114,7 @@ Pigeon переносит официальный веб-интерфейс XChat
     <td width="50%" valign="top">
       <h4>Windows</h4>
       Скачай <code>Pigeon-Setup.exe</code> из последнего релиза и запусти его.<br><br>
-      Для обновления установи новую версию поверх старой. <strong>Удалять Pigeon заранее не нужно</strong> — настройки и данные сохранятся.
+      Следующие обновления предлагает сам Pigeon и устанавливает после подтверждения. Настройки и сессия сохраняются.
     </td>
     <td width="50%" valign="top">
       <h4>Linux</h4>
